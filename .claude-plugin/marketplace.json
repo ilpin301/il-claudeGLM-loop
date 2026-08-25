@@ -1,0 +1,16 @@
+{
+  "name": "il-claudeGLM-loop",
+  "owner": {
+    "name": "ilpin301",
+    "url": "https://github.com/ilpin301"
+  },
+  "plugins": [
+    {
+      "name": "il-claudeGLM-loop",
+      "source": "./",
+      "description": "Four-phase plan hardening: recon → interrogate → adversarial GLM-5.3 review → cross-model build & inspection. Ships /il-claudeGLM-loop:il-claudeGLM-loop, /il-claudeGLM-loop:il-glm-review, /il-claudeGLM-loop:il-glm-build.",
+      "version": "1.0.1"
+    }
+  ],
+  "description": "Four-phase plan hardening with GLM-5.3 as the adversarial rival model: recon, interrogate, read-only GLM review, cross-model build."
+}

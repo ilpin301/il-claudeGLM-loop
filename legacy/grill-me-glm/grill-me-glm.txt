@@ -1,0 +1,148 @@
+======================================================================
+ grill-me-glm  -  HOW TO USE  (step-by-step)
+======================================================================
+
+WHAT IT DOES
+------------
+It hardens your PLAN before any code gets written, in two acts:
+
+  ACT 1  (you <-> Claude)   Claude interviews you one question at a
+                            time until your idea is fully pinned down.
+  ACT 2  (Claude <-> GLM)   Claude writes the agreed plan to PLAN.md,
+                            then GLM-5.3 (a different model, running on
+                            z.ai) attacks it as an adversarial reviewer,
+                            round after round, until it approves or a
+                            round cap is hit. GLM is READ-ONLY - it can
+                            read your repo but never edits anything.
+
+You only step in at two points: answering the interview, and giving the
+final go before code is written.
+
+
+ONE-TIME SETUP (do this once)
+-----------------------------
+1. Have the Claude Code CLI installed  ->  check:  claude --version
+2. Have a z.ai API key on a GLM Coding plan.
+3. Put the key in an environment variable named ZAI_API_KEY.
+      PowerShell (this session, temporary):
+         $env:ZAI_API_KEY = "your-zai-key-here"
+      Permanent (Windows):
+         setx ZAI_API_KEY "your-zai-key-here"      (reopen terminal after)
+4. IMPORTANT: run your normal Claude session as REAL Claude (Anthropic),
+   not under GLM. That way the reviewer (GLM) is a genuinely different
+   model. If you launch everything under GLM, both sides are GLM and the
+   cross-model check is pointless.
+
+
+======================================================================
+ EXAMPLE: "I want to build an app"
+======================================================================
+
+STEP 1 - Write what you want (optional but recommended)
+-------------------------------------------------------
+Open a plain text file and describe the app in your own words. Rough is
+fine - the interview will sharpen it. Save it, e.g.  idea.txt
+
+   Example idea.txt:
+   -----------------
+   I want a small web app where people can track books they've read.
+   Add a book (title, author, rating 1-5, date finished), see a list,
+   filter by rating. Just me using it at first. Prefer Python.
+   -----------------
+
+STEP 2 - Start the skill
+------------------------
+In Claude Code, type:
+
+   /grill-me-glm
+
+Then hand it your idea. Either paste the text, or point at the file:
+
+   /grill-me-glm  here is what I want to build - see idea.txt
+
+(You can also just type your idea straight after the command without a
+file. The file is only a convenience.)
+
+STEP 3 - Answer the interview (ACT 1)
+-------------------------------------
+Claude asks ONE question at a time and suggests an answer each time.
+Examples of what it may ask:
+   - Web app or desktop? (recommend: web, single-page)
+   - Store data where? (recommend: SQLite - simplest for one user)
+   - Login needed now, or later? (recommend: skip for v1)
+   - What exactly counts as "date finished" if a book is re-read?
+
+Just reply in plain language. Say "your recommendation is fine" to
+accept a suggestion. Push back when you disagree - that's the point.
+It keeps going until every open decision is settled.
+
+STEP 4 - Claude writes the plan
+-------------------------------
+When the interview is done, Claude writes two files in your project:
+   PLAN.md              <- the clean final plan (the WHAT)
+   PLAN-REVIEW-LOG.md   <- the full argument transcript (the WHY)
+
+STEP 5 - GLM reviews it (ACT 2, automatic)
+------------------------------------------
+Claude sends PLAN.md to GLM-5.3. Each round GLM either:
+   VERDICT: APPROVED   -> plan is solid, move on
+   VERDICT: REVISE     -> GLM lists concrete flaws + one-line fixes
+On REVISE, Claude decides what's worth fixing, updates PLAN.md, and
+sends it back to the SAME GLM session (GLM remembers its earlier points).
+This repeats until APPROVED or the round cap (default 5) is reached.
+You don't do anything during this - just watch the rounds.
+
+STEP 6 - Final sign-off (your second and last gate)
+---------------------------------------------------
+Claude shows you the final plan, a short summary of what the review
+improved, and the round count, then asks:
+   "Grilled + survived N rounds of GLM. Implement it now?"
+Say yes -> Claude starts writing the actual app code.
+Say no  -> nothing is built; the plan stays for later.
+
+If GLM never approved and the cap was hit, Claude does NOT pretend it
+passed - it lists the unresolved disagreements and lets you decide.
+(GLM-5.3 is very strict, so this can happen on tricky plans - that's a
+useful outcome, not a failure.)
+
+
+======================================================================
+ KNOBS you can set (optional)
+======================================================================
+Pass them when you invoke, e.g.:   /grill-me-glm  rounds=3   my idea...
+
+   rounds=N     Max review rounds before it stops. Default 5.
+                Lower it (e.g. 3) to save time/cost - each round is a
+                real GLM call and costs roughly $0.15-0.35.
+
+The plan/log filenames (PLAN.md / PLAN-REVIEW-LOG.md) are the defaults;
+you normally don't touch them.
+
+
+======================================================================
+ WHEN TO USE WHICH SKILL
+======================================================================
+   /grill-me-glm         You are planning from scratch and want both
+                         alignment AND a second-model check. (this one)
+   /grill-with-docs-glm  Same, but in a project that already has a
+                         glossary (CONTEXT.md) / architecture decisions -
+                         it also keeps those docs updated as you go.
+   /glm-review           You ALREADY have a plan and only want GLM to
+                         stress-test it - skips the interview.
+
+Use grill-me-glm especially before high-stakes work: auth, database
+schema, migrations, payments, concurrency - anything expensive to get
+wrong. Skip it for tiny/obvious changes.
+
+
+======================================================================
+ QUICK CHECKLIST
+======================================================================
+   [ ] ZAI_API_KEY is set
+   [ ] running as real Claude (not under GLM)
+   [ ] (optional) idea.txt written
+   [ ] type: /grill-me-glm  <your idea or file>
+   [ ] answer the questions
+   [ ] let GLM review run
+   [ ] approve the final plan -> code gets written
+======================================================================
