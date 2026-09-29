@@ -1,13 +1,13 @@
 ---
 name: il-glm-review
-description: A standalone adversarial PLAN-review loop where Claude Code (builder) and GLM-5.3 (read-only critic) tag-team an implementation plan before any code is written. Use this when you ALREADY have a plan or a clear idea and just want the cross-model stress-test — no requirements interview first. Claude drafts/loads the plan into PLAN.md, GLM reviews it read-only (headless `claude -p` pointed at z.ai) and returns VERDICT:APPROVED or VERDICT:REVISE under a severity gate, Claude revises and re-submits to the SAME GLM session (context preserved) until APPROVED or a configurable MAX_ROUNDS cap is hit. Human approves the converged plan before code. Use when the user says "/il-glm-review", "glm review my plan", "have GLM review my plan", "argue this plan with GLM", "adversarial plan review", "make Claude and GLM argue over the plan", or is about to build something high-stakes (auth, schema, concurrency, migrations, payments) and wants a second-model sanity check on the PLAN before implementation. For a guided requirements interview BEFORE the review, use /il-claudeGLM-loop instead. NOT for reviewing already-written CODE and NOT for trivial changes.
+description: A standalone adversarial PLAN-review loop where Claude Code (planner and sole implementer) and GLM-5.3 (read-only critic) tag-team an implementation plan before any code is written. Use this when you ALREADY have a plan or a clear idea and just want the cross-model stress-test — no requirements interview first. Claude drafts/loads the plan into PLAN.md, GLM reviews it read-only (headless `claude -p` pointed at z.ai) and returns VERDICT:APPROVED or VERDICT:REVISE under a severity gate, Claude revises and re-submits to the SAME GLM session (context preserved) until APPROVED or a configurable MAX_ROUNDS cap is hit. Human approves the converged plan before code. Use when the user says "/il-glm-review", "glm review my plan", "have GLM review my plan", "argue this plan with GLM", "adversarial plan review", "make Claude and GLM argue over the plan", or is about to build something high-stakes (auth, schema, concurrency, migrations, payments) and wants a second-model sanity check on the PLAN before implementation. For a guided requirements interview BEFORE the review, use /il-claudeGLM-loop instead. NOT for reviewing already-written CODE and NOT for trivial changes.
 ---
 
 # il-glm-review — Adversarial Plan-Review Loop
 
 _Rewrite of `codex-review` from [claudex-loop](https://github.com/chaseai-yt/claudex-loop) by Chase AI (MIT), with OpenAI Codex replaced by GLM-5.3. See `THIRD-PARTY-NOTICES.md`._
 
-Two models, one plan, a bounded argument. **Claude is the builder and orchestrator. GLM-5.3 is a read-only critic** that can read the repo and the plan but cannot touch a single file. They communicate strictly through `PLAN.md` + a GLM session that persists across rounds. The human enters at exactly two points: kickoff and final sign-off.
+Two models, one plan, a bounded argument. **Claude is the planner, builder and orchestrator. GLM-5.3 is a read-only critic** that can read the repo and the plan but cannot touch a single file. They communicate strictly through `PLAN.md` + a GLM session that persists across rounds. The human enters at exactly two points: kickoff and final sign-off.
 
 This is a **deliberate, high-stakes tool** — reach for it on auth, data models, concurrency, migrations, payments, anything expensive to get wrong. Skip it for obvious/cheap work.
 
@@ -144,12 +144,13 @@ timeout 1200 claude -p "I revised the plan. Re-review PLAN.md — check whether 
 
 ### Step 3 — Resolution (human gate #2)
 
-**If APPROVED:** present the final `PLAN_FILE`, a 3-bullet summary of what the argument improved, and the round count. Ask: *"Plan survived N rounds of GLM. Implement it now — GLM builds it (`/il-glm-build`), Claude builds it, or stop here?"* Only on a yes is code written. **No code is written during the loop.** If the user picks GLM, invoke `il-glm-build` with `SPEC_FILE=PLAN.md` and the same `LOG_FILE` — roles flip and the build rounds append to the same log.
+**If APPROVED:** present the final `PLAN_FILE`, a 3-bullet summary of what the argument improved, and the round count. Ask: *"Plan survived N rounds of GLM. Claude implements it now, or stop here?"* Only on a yes is code written. **No code is written during the loop.** Claude implements directly; GLM has no build role.
 
 **If MAX_ROUNDS hit without APPROVED (deadlock):** do NOT pretend it converged. List each point GLM still flags and Claude's counter-position. Hand it to the human to break the tie. A flagged disagreement beats a false "approved."
 
 ## Hard rules
 
+- GLM is a plan critic only — it never writes, edits or builds code and never reviews code diffs; Claude implements every change (user rule 2026-09-29).
 - GLM is read-only EVERY round — `--allowedTools "Read Grep Glob"`, round 1 and every resume. It never writes.
 - Never run with an empty `ZAI_API_KEY`, and never skip the preflight ping — fail fast on anything but a 200.
 - Scope the reviewer in the prompt: name the files it needs, forbid Grep/Glob over large data/store directories, forbid reading `.env`/secret files — anything GLM reads is sent to z.ai.

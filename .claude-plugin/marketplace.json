@@ -8,9 +8,9 @@
     {
       "name": "il-claudeGLM-loop",
       "source": "./",
-      "description": "Four-phase plan hardening: recon → interrogate → adversarial GLM-5.3 review → cross-model build & inspection. Ships /il-claudeGLM-loop:il-claudeGLM-loop, /il-claudeGLM-loop:il-glm-review, /il-claudeGLM-loop:il-glm-build.",
+      "description": "Plan hardening: recon → interrogate → read-only GLM-5.3 plan review → Claude builds. Ships /il-claudeGLM-loop:il-claudeGLM-loop and /il-claudeGLM-loop:il-glm-review; il-glm-build is disabled.",
       "version": "1.0.1"
     }
   ],
-  "description": "Four-phase plan hardening with GLM-5.3 as the adversarial rival model: recon, interrogate, read-only GLM review, cross-model build."
+  "description": "Plan hardening with GLM-5.3 as a read-only adversarial plan critic: recon, interrogate, read-only GLM review, Claude builds."
 }

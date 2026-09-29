@@ -1,20 +1,20 @@
 ---
 name: il-claudeGLM-loop
-description: Four-phase plan hardening with GLM-5.3 as the rival model. PHASE 0 RECON — Claude scouts first (codebase + docs on brownfield; prior art, stack, and pitfalls research on greenfield) and drafts an assumptions ledger. PHASE 1 INTERROGATE — confirm the ledger in one batch, then question only the load-bearing decisions one at a time (each with why-it-matters, a recommendation, and what-breaks-if-we-guess-wrong), cosmetic ones batched, with a visible decision map and an accept-all-recommendations escape hatch. PHASE 2 REVIEW — the locked plan goes to PLAN.md and GLM-5.3 adversarially reviews it read-only (VERDICT: APPROVED/REVISE, severity-gated); Claude revises and re-submits to the SAME GLM session until APPROVED or MAX_ROUNDS, then you sign off before any code. PHASE 3 BUILD (optional) — you pick the builder and the models swap jobs: GLM builds via il-glm-build and Claude reads the full diff + runs the proof itself; Claude builds and a fresh read-only GLM session cross-inspects the diff (on by default, logged opt-out only); either way you approve the final diff. Use when the user says "/il-claudeGLM-loop", "run the GLM loop", "glm-loop this", "grill me then have GLM review", "stress-test this plan before we build", or is about to build something high-stakes (auth, schema, concurrency, migrations, payments, greenfield architecture) and wants alignment AND a cross-model sanity check first. Locked plan needing only the GLM loop → /il-glm-review. NOT for reviewing already-written code, NOT for trivial changes.
+description: Three-phase plan hardening (plus Claude's own build) with GLM-5.3 as the read-only rival critic. PHASE 0 RECON — Claude scouts first (codebase + docs on brownfield; prior art, stack, and pitfalls research on greenfield) and drafts an assumptions ledger. PHASE 1 INTERROGATE — confirm the ledger in one batch, then question only the load-bearing decisions one at a time (each with why-it-matters, a recommendation, and what-breaks-if-we-guess-wrong), cosmetic ones batched, with a visible decision map and an accept-all-recommendations escape hatch. PHASE 2 REVIEW — the locked plan goes to PLAN.md and GLM-5.3 adversarially reviews it read-only (VERDICT: APPROVED/REVISE, severity-gated); Claude revises and re-submits to the SAME GLM session until APPROVED or MAX_ROUNDS, then you sign off before any code. PHASE 3 BUILD (optional) — Claude implements the approved plan itself and verifies its own build (tests/checks); GLM never builds or reviews code (user rule 2026-09-29); you approve the final diff. Use when the user says "/il-claudeGLM-loop", "run the GLM loop", "glm-loop this", "grill me then have GLM review", "stress-test this plan before we build", or is about to build something high-stakes (auth, schema, concurrency, migrations, payments, greenfield architecture) and wants alignment AND a cross-model sanity check first. Locked plan needing only the GLM loop → /il-glm-review. NOT for reviewing already-written code, NOT for trivial changes.
 ---
 
 # il-claudeGLM-loop — Recon, Interrogate, Review, Build
 
 _Rewrite of [claudex-loop](https://github.com/chaseai-yt/claudex-loop) by Chase AI (MIT) with OpenAI Codex replaced by GLM-5.3. See `THIRD-PARTY-NOTICES.md`._
 
-Four phases, four failure modes killed:
+Four phases, four failure modes killed (GLM only critiques plans; Claude writes all code):
 
 - **Phase 0 — RECON** kills *interviewing blind*: Claude scouts the terrain (code or research) before asking you anything, so the interview starts informed instead of generic.
 - **Phase 1 — INTERROGATE** kills *building the wrong thing*: Claude interrogates you until intent is locked — but only on decisions that are actually load-bearing.
 - **Phase 2 — REVIEW** kills *a plan that sounds right but breaks*: a different model (GLM-5.3) attacks the locked plan. Cross-model = no echo chamber.
-- **Phase 3 — BUILD** *(optional)* kills *grading your own work*: one model implements the locked plan, the rival model grades the diff — in both directions.
+- **Phase 3 — BUILD** *(optional)* kills *unverified work*: Claude implements the locked plan and proves it with tests/checks. GLM has no part in it.
 
-You enter at four points only: confirming the assumptions ledger, answering the fire, signing off the converged plan, and approving the final diff if you build. GLM is read-only throughout recon, interrogation, and review — **no code is written until you sign off the converged plan.**
+You enter at four points only: confirming the assumptions ledger, answering the fire, signing off the converged plan, and approving the final diff if Claude builds. GLM is read-only throughout recon, interrogation, and review — **no code is written until you sign off the converged plan.**
 
 ---
 
@@ -177,10 +177,6 @@ Hand the locked plan to GLM-5.3 for adversarial review. GLM runs through the Cla
 | `LOG_FILE` | `PLAN-REVIEW-LOG.md` | Append-only argument transcript. The artifact. |
 | `TIMEOUT_MS` | `1200000` | Ceiling per headless call (shell `timeout 1200`). Real reviews run 10+ min; raise further for large-repo or deep reviews rather than treating a slow review as a failure. |
 | `research` | ask | `none` / `web` / `deep` — pre-answers the Phase 0 research gate. |
-| `inspect` | `on` | Post-build cross-inspection of Claude-built code by a fresh read-only GLM session. `off` = skip (logged as an explicit opt-out, never silently). |
-| `MAX_INSPECTION_ROUNDS` | `2` | Initial post-build review + one reinspection after accepted fixes. |
-| `isolate` | `off` | `worktree` runs Phase 3 GLM builds in a throwaway git worktree. See `il-glm-build`. |
-| `MAX_TURNS` | unset | Optional `--max-turns` cap on the Phase 3 builder. |
 
 If invoked with e.g. `rounds=3`, use that for `MAX_ROUNDS`. Echo resolved values before starting.
 
@@ -251,28 +247,23 @@ timeout 1200 claude -p "I revised the plan. Re-review PLAN.md — check whether 
 3. If round > `MAX_ROUNDS` → break to Resolution (deadlock).
 
 ### Resolution (you sign off — final gate)
-- **APPROVED:** present the final `PLAN_FILE`, a 3-bullet summary of what the loop improved, and the round count. Ask: *"Interrogated + survived N rounds of GLM. Implement it now — GLM builds it (`/il-glm-build`), Claude builds it, or stop here?"* Code only on a yes. **No code is written during Phases 0-2.**
+- **APPROVED:** present the final `PLAN_FILE`, a 3-bullet summary of what the loop improved, and the round count. Ask: *"Interrogated + survived N rounds of GLM. Claude implements it now, or stop here?"* Code only on a yes. **No code is written during Phases 0-2.**
 - **MAX_ROUNDS hit without APPROVED (deadlock):** do NOT fake convergence. List each unresolved point + Claude's counter-position; hand it to the user to break the tie. A flagged disagreement beats a false "approved."
 
 ---
 
-## PHASE 3 (optional) — BUILD (GLM ↔ Claude, roles flipped)
+## PHASE 3 (optional) — BUILD (Claude alone)
 
-If the user picks GLM: invoke the `il-glm-build` skill with `SPEC_FILE=PLAN.md` and the same `LOG_FILE` — it appends `## Phase 3 — Build` to the log, so one artifact tells the whole story (reconned → interrogated → reviewed → built → verified). Roles flip: GLM writes the code with full access, Claude reviews the diff and runs the proof. If the user picks Claude, implement directly — then run the **post-build cross-inspection** below.
+Claude implements the approved plan directly. GLM is not involved: it never writes, edits or builds code, and never reviews the diff (user rule 2026-09-29). `il-glm-build` is disabled.
 
-### Post-build cross-inspection (default on every Claude-built path)
+### Claude verifies its own build
 
-The doctrine is *whoever made the thing never checks the thing* — that applies to Claude's code too. After Claude implements and the proof gates pass:
-
-1. Launch a **fresh read-only GLM session** (new session, NOT the Phase 2 one — the reviewer should see the code cold, not through its own plan critiques). Same read-only invocation as Round 1, with a new `$STAMP`. Give it: `PLAN.md`, the base commit, and the code diff. Ask for PR-style findings — correctness, spec fidelity, edge cases, nothing outside scope — no verdict line needed; this is advisory review, not a gate loop.
-2. Claude arbitrates each finding: accept (fix it, rerun affected tests) or reject *with a logged reason*. Cap at `MAX_INSPECTION_ROUNDS=2`.
-3. Append to `LOG_FILE` under `## Post-build inspection`: findings verbatim, Claude's dispositions, rounds used. Present the summary alongside the final diff at the human gate.
-
-Opt-out: `inspect=off` at invocation or the user declining at Resolution. Skipping silently is not allowed — the log must show either the inspection or the explicit opt-out.
+After implementing, Claude runs the tests/checks the plan names and reports evidence (test output, exit codes, grep counts — per the user's rules). Append to `LOG_FILE` under `## Phase 3 — Build`: what was built, the checks run and their results. Present the summary alongside the final diff at the human gate.
 
 ---
 
 ## Hard rules
+- GLM is a plan critic only — it never writes, edits or builds code and never reviews code diffs; Claude implements every change (user rule 2026-09-29).
 - Phases run in order: 0 → 1 → 2. Don't write `PLAN.md` until the interrogation has actually resolved the decision map with the user (or they invoked the escape hatch).
 - The assumptions ledger is presented ONCE as a batch — never drip assumptions as individual questions.
 - GLM is read-only EVERY review round — whitelist only `Read Grep Glob`, round 1 and every resume. It never writes during Phases 0-2.
@@ -287,7 +278,7 @@ Opt-out: `inspect=off` at invocation or the user declining at Resolution. Skippi
 - `CONTEXT.md` stays a glossary only — never implementation details.
 
 ## What NOT to do
-- Don't invoke this skill just to review pre-existing code. (Code built BY this skill does get reviewed — that's the post-build cross-inspection, on by default.)
+- Don't invoke this skill to review code, and don't hand any code (pre-existing or newly built) to GLM. It critiques plans only.
 - Don't run the main session under GLM — then both sides are GLM and the whole premise collapses.
 - Don't let GLM edit files during review. Read-only, always.
 - Don't skip Phase 1 — the interrogation is half the value.

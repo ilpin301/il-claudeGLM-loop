@@ -1,8 +1,8 @@
 # il-claudeGLM-loop
 
-Four-phase plan hardening for Claude Code, with **GLM-5.3** as the rival model.
+Plan hardening for Claude Code, with **GLM-5.3** as the read-only rival critic.
 
-Two different models harden your plan before a line of code exists — then swap jobs to build it, and whoever built it never grades it.
+Two different models harden your plan before a line of code exists. GLM only critiques plans, across several rounds; Claude writes all code, always.
 
 This is a rewrite of [claudex-loop](https://github.com/chaseai-yt/claudex-loop) by Chase AI (MIT), with OpenAI Codex replaced throughout by GLM-5.3 running headlessly through the Claude Code CLI against z.ai's Anthropic-compatible endpoint. See [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md).
 
@@ -13,7 +13,7 @@ This is a rewrite of [claudex-loop](https://github.com/chaseai-yt/claudex-loop) 
 | **0 — RECON** | *Interviewing blind.* Claude scouts the codebase (or researches prior art, stack, and pitfalls on greenfield) and drafts an assumptions ledger before asking you anything. |
 | **1 — INTERROGATE** | *Building the wrong thing.* Load-bearing decisions get questioned one at a time — each with why-it-matters, a committed recommendation, and what-breaks-if-we-guess-wrong. Cosmetic ones get batched. |
 | **2 — REVIEW** | *A plan that sounds right but breaks.* GLM-5.3 attacks the locked plan read-only, severity-gated, across a persistent session that remembers its own prior critiques. |
-| **3 — BUILD** *(optional)* | *Grading your own work.* One model implements, the rival model grades the diff — in both directions. |
+| **3 — BUILD** *(optional)* | *Unverified work.* Claude implements the approved plan and proves it with its own tests/checks. GLM never builds or reviews code. |
 
 You enter at four points only: confirming the ledger, answering the fire, signing off the converged plan, approving the final diff.
 
@@ -23,7 +23,7 @@ You enter at four points only: confirming the ledger, answering the fire, signin
 |---------|--------------|
 | `/il-claudeGLM-loop:il-claudeGLM-loop` | The full four-phase loop. Start here for high-stakes work. |
 | `/il-claudeGLM-loop:il-glm-review` | Standalone adversarial plan-review loop. Use when you already have a plan and just want the cross-model stress-test. |
-| `/il-claudeGLM-loop:il-glm-build` | Role-flip: GLM implements a frozen spec with write access, Claude reviews the diff and runs the proof. |
+| `/il-claudeGLM-loop:il-glm-build` | **DISABLED** (user rule 2026-09-29: GLM never writes code; Claude implements). Kept as historical reference only. |
 
 `legacy/` keeps the two earlier GLM grill skills (`grill-me-glm`, `grill-with-docs-glm`) that this plugin supersedes.
 
@@ -47,13 +47,11 @@ Two things measured on the acceptance run make this checkable rather than hopefu
 - The response JSON carries `modelUsage` keyed by the model that actually served the request — a real GLM round shows `{"glm-5.3": {...}}`. That is objective proof of who reviewed, unlike asking the session to describe itself.
 - A *wrong* key does not fall through to Claude: `glm-5.3` is not an Anthropic model, so the call fails with `unrecognized_model`. It fails by **hanging until the timeout** with an empty output file rather than erroring fast, so the skills treat an empty output as failure and print stderr instead of retrying.
 
-## ⚠️ Build phase writes with permissions off
+## GLM is read-only
 
-`il-glm-build` runs GLM with `--dangerously-skip-permissions`. That is **machine-wide, not repo-scoped**: GLM can write outside the repo, run arbitrary shell, install packages, and make network calls. Anything it reads — including the spec — is untrusted input a permission-free agent may act on.
+GLM gets `--allowedTools "Read Grep Glob"` and headless mode auto-denies everything else, so it is read-only by construction, round one and every resume alike. It never writes, edits or builds code and never reviews code diffs; Claude implements every change.
 
-The mandatory clean-tree gate makes *in-repo* changes revertible. It does not bound the blast radius. For any repo whose contents you did not write, use `isolate=worktree`, which runs the build in a throwaway git worktree and cherry-picks the result back only after Claude reviews the diff.
-
-The review phases have no such exposure: GLM gets `--allowedTools "Read Grep Glob"` and headless mode auto-denies everything else, so it is read-only by construction, round one and every resume alike.
+`il-glm-build` (which ran GLM with `--dangerously-skip-permissions`, machine-wide) is disabled and must not be invoked.
 
 ## Install
 
@@ -74,15 +72,10 @@ Pass as skill args, e.g. `rounds=3`:
 | `LOG_FILE` | `PLAN-REVIEW-LOG.md` | Append-only argument transcript — the real artifact. |
 | `TIMEOUT_MS` | `600000` | Ceiling per headless call. |
 | `research` | ask | `none` / `web` / `deep` — pre-answers the Phase 0 research gate. |
-| `inspect` | `on` | Post-build cross-inspection of Claude-built code by a fresh read-only GLM session. |
-| `MAX_INSPECTION_ROUNDS` | `2` | Post-build review + one reinspection. |
-| `MAX_FIX_ROUNDS` | `2` | Build fix rounds before Claude takes over. |
-| `isolate` | `off` | `worktree` jails the build phase. |
-| `MAX_TURNS` | unset | Turn cap on the builder. |
 
 ## What changed from the Codex original
 
-- **Reviewer/builder is GLM-5.3** via `claude -p` against z.ai, not `codex exec`.
+- **Plan reviewer (read-only critic) is GLM-5.3** via `claude -p` against z.ai, not `codex exec`.
 - **Read-only by whitelist, not by sandbox flag.** `--allowedTools "Read Grep Glob"` — and unlike Codex, there is no separate resume gotcha: the same flags apply to round 1 and every resume.
 - **`.session_id` re-read every round**, never pinned — `--resume` can fork, and a stale id silently drops intermediate findings.
 - **One skill bench, not two.** Codex read `~/.agents/skills` while Claude read `~/.claude/skills`. GLM runs inside the same CLI, so there is one directory and no cross-bench mismatch to report.
