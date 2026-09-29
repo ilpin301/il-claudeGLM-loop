@@ -35,10 +35,12 @@ The clean-tree gate does exactly one thing: it makes *in-repo* changes isolatabl
 - Claude Code CLI installed (`claude --version`) — the harness that runs GLM.
 - **POSIX shell required** (Git Bash / macOS / Linux). Not cmd, not PowerShell.
 - z.ai API key exported as `ZAI_API_KEY`. Endpoint `https://api.z.ai/api/anthropic`, model `glm-5.3`.
-- **Preflight, every run:** `[ -n "$ZAI_API_KEY" ]` or hard stop. Measured behaviour with a missing or invalid key: the run does **not** quietly become a Claude review — `glm-5.3` is not an Anthropic model, so the call is rejected — but it fails by hanging until the timeout with an empty output file, burning ten minutes for nothing. Preflight turns that into a one-line failure. (The silent-fallthrough risk returns the moment someone drops the `ANTHROPIC_MODEL` pin — keep it pinned.)
+- **Preflight, every run:** `[ -n "$ZAI_API_KEY" ]` or hard stop, then the direct ping in the Step 2 block (~3 s): `200` = key and endpoint fine, anything else = stop and surface the code. Cheap, fails fast. (The `ANTHROPIC_MODEL="glm-5.3"` pin works as is and needs no alias mapping — keep it pinned, dropping it risks a silent fallthrough to Claude.)
 - **Echo at kickoff:** model, endpoint, `claude --version`, resolved tunables. If the user objects, stop before launching.
 - **Objective identity proof (verified on the gate run):** the response JSON carries `modelUsage` keyed by the model that actually served the request — a real GLM round shows `{"glm-5.3": {...}}`. Assert that key rather than asking the session to describe itself; models misidentify themselves, and a read-only reviewer has no Bash to echo its own env.
-- **A bad key hangs, it does not error fast (verified).** With an invalid `ZAI_API_KEY` the call produces an empty output file, writes `[claude-code:unrecognized_model] {"model":"glm-5.3"}` to stderr, and then sits until the timeout kills it (exit 124). Two consequences: the empty/missing output file is your real failure detector, and the `glm-5.3` model id is itself a safety net — Anthropic does not recognise it, so a key mix-up cannot silently downgrade into Claude reviewing Claude. Never treat a timeout as "slow review" without checking `$ERR` first.
+- **The stderr line `[claude-code:unrecognized_model] {"model":"glm-5.3","query_source":"sdk"}` is a benign warning (verified).** It is printed on EVERY call, including fully successful ones (a successful ping returned "pong" with `modelUsage` `{"glm-5.3"}` and still printed it). It is NOT a bad-key signature — never diagnose from it, or from a hang. Bad key / wrong endpoint is diagnosed only by the direct ping (non-200).
+- **Empty output after a timeout = "cap too short OR stalled", not "bad key".** Real GLM runs are slow (a plan re-review measured 760 s wall / 43 turns). Use the stream file (see Step 2) to tell "still working" from "stalled".
+- **Hooks fire too:** Claude Code SessionStart hooks from user plugins also run inside the headless GLM session. Harmless — hook lines in the stream are not errors.
 - Run from the target repo's root.
 
 ## Tunables (read from args, else default)
@@ -51,7 +53,7 @@ The clean-tree gate does exactly one thing: it makes *in-repo* changes isolatabl
 | `PROOF_CMD` | from spec | Exact test/verify command GLM must run as proof. If the spec lacks one, ask the user ONE question to get it before launching. |
 | `isolate` | `off` | `worktree` = build inside a throwaway git worktree on a scratch branch. |
 | `MAX_TURNS` | unset | Appends `--max-turns <n>`. Revisit a default (~50) once real build turn counts are known. |
-| `TIMEOUT_MS` | `600000` | Ceiling per headless call. |
+| `TIMEOUT_MS` | `1200000` | Ceiling per headless call (shell `timeout 1200`). |
 
 Echo resolved values before starting.
 
@@ -86,10 +88,12 @@ EOF
 
 ```bash
 [ -n "$ZAI_API_KEY" ] || { echo "ZAI_API_KEY unset — refusing to run"; exit 1; }
+# Preflight ping (~3 s): 200 = key + endpoint fine. Anything else -> STOP, surface the code.
+NO_PROXY='*' curl -s -m 30 -o /dev/null -w '%{http_code}\n' https://api.z.ai/api/anthropic/v1/messages -H "x-api-key: $ZAI_API_KEY" -H "anthropic-version: 2023-06-01" -H "content-type: application/json" -d '{"model":"glm-5.3","max_tokens":5,"messages":[{"role":"user","content":"ping"}]}'
 git status -sb   # must be clean; abort otherwise
 
 STAMP=$(date +%s)-$$
-BOUT=/tmp/glm-build.$STAMP.json
+BOUT=/tmp/glm-build.$STAMP.jsonl
 BERR=/tmp/glm-build.$STAMP.err
 rm -f "$BOUT" "$BERR"
 echo "BOUT=$BOUT BERR=$BERR"   # ECHO IT — the later read runs in a new shell where $$ differs
@@ -98,15 +102,17 @@ ANTHROPIC_BASE_URL="https://api.z.ai/api/anthropic" \
 ANTHROPIC_AUTH_TOKEN="$ZAI_API_KEY" \
 ANTHROPIC_MODEL="glm-5.3" \
 NO_PROXY="*" \
-claude -p --dangerously-skip-permissions \
-  --output-format json \
+timeout 1200 claude -p --dangerously-skip-permissions \
+  --output-format stream-json --verbose \
   < "$P" > "$BOUT" 2>"$BERR"
 ```
 
 - Prompt goes via stdin (`< "$P"`) — avoids quoting bugs AND gives immediate stdin EOF under a non-interactive driver.
 - Append `--max-turns "$MAX_TURNS"` when set.
-- Read `$BOUT` (the echoed literal path): `.result` is GLM's report, `.session_id` is what fix rounds resume, `.is_error` true → print `$BERR` and STOP.
-- **Timing:** foreground with `timeout: 600000` on the Bash tool call (the default 2-minute tool timeout kills real builds). If the spec is clearly >10 min of work (multi-file feature, migration), launch with `run_in_background: true` and read `$BOUT` when it exits. Don't kill a quiet background run early — real builds are legitimately slow.
+- Read `$BOUT` (the echoed literal path). It is a `.jsonl` stream; the final line with `"type":"result"` carries `result` (GLM's report), `session_id` (what fix rounds resume), `is_error`, `num_turns`, `duration_ms`, `modelUsage`. Extract with a short python json loop, e.g. `python -c "import json,sys; r=[x for x in map(json.loads,filter(str.strip,open(sys.argv[1]))) if x.get('type')=='result'][-1]; print(r['session_id'],r['is_error'],r['num_turns'],list(r['modelUsage'])); print(r['result'])" "$(cygpath -w "$BOUT")"`. No `result` line or `is_error` true → print `$BERR` and the tail of `$BOUT`, STOP. Exit 124 = cap hit, not proof of a bad key.
+- **Mid-run progress (only if a stall is suspected, not as polling):** the stream is written live — count `"type":"tool_use"` blocks in the `type=="assistant"` lines; `system`/`thinking_tokens` lines show the session is alive.
+- **Timing:** Claude Code's Bash tool caps foreground calls at 600000 ms, so launch every GLM call with `run_in_background: true` (the harness notifies on exit; do not poll) and read `$BOUT` when it exits. Don't kill a quiet background run early — real builds are legitimately slow.
+- **Scope rule (prompt contract):** anything GLM reads is sent to z.ai. The build prompt's CONSTRAINTS must forbid reading `.env`/secret files and forbid Grep/Glob over large data/store directories.
 - **Heads-up on completion (required):** when a background GLM run finishes, the FIRST line of your next message to the user must be a loud standalone banner — `🔔 GLM FINISHED — <what> (exit ok/fail) — verifying now` — BEFORE any verification output. The user is not watching tool calls; never let a completed build slide silently into the verify phase.
 
 ### `isolate=worktree`
@@ -136,12 +142,14 @@ ANTHROPIC_BASE_URL="https://api.z.ai/api/anthropic" \
 ANTHROPIC_AUTH_TOKEN="$ZAI_API_KEY" \
 ANTHROPIC_MODEL="glm-5.3" \
 NO_PROXY="*" \
-claude -p --resume "$SESSION_ID" --dangerously-skip-permissions \
-  --output-format json \
+timeout 1200 claude -p --resume "$SESSION_ID" --dangerously-skip-permissions \
+  --output-format stream-json --verbose \
   < "$P2" > "$BOUT2" 2>"$BERR2"
 ```
 
-Re-read `.session_id` from each round's JSON and resume *that* id next time — resume can fork, and a stale id silently loses the fix context. Re-verify (Step 3) after each round. After `MAX_FIX_ROUNDS` failed rounds: STOP delegating — Claude takes over and finishes the remaining fixes directly. Log the takeover. Ping-ponging trivia through delegation burns more than it saves.
+(Run with `run_in_background: true`; `$BOUT2`/`$BERR2` are new stamped `.jsonl`/`.err` paths, echoed the same way.)
+
+Re-read `session_id` from each round's final `"type":"result"` line and resume *that* id next time — resume can fork, and a stale id silently loses the fix context. Re-verify (Step 3) after each round. After `MAX_FIX_ROUNDS` failed rounds: STOP delegating — Claude takes over and finishes the remaining fixes directly. Log the takeover. Ping-ponging trivia through delegation burns more than it saves.
 
 ## Step 5 — Human gate (diff sign-off)
 
@@ -153,7 +161,7 @@ Present: 3-bullet summary of what was built, files-changed list, proof-test outp
 ## Hard rules
 
 - Clean tree before launch. Always. No exceptions.
-- Never launch with an empty `ZAI_API_KEY` — skip-permissions plus a silent provider fallback is the worst combination in this repo.
+- Never launch with an empty `ZAI_API_KEY`, and never skip the preflight ping (200 or stop) — skip-permissions plus a silent provider fallback is the worst combination in this repo.
 - Claude never skips the diff read. GLM's claims are advisory until Claude has read the diff and run the proof.
 - Fix loop terminates at `MAX_FIX_ROUNDS` — then Claude takes over. No unbounded delegation ping-pong.
 - Commits, pushes, releases, GitHub mutations: Claude-side only, after the human gate. GLM never commits.
